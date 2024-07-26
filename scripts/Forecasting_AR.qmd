@@ -1,0 +1,308 @@
+---
+title: "Replication of PyMC Autoregressive Forecasting for CmdStanPy"
+---
+
+```{python}
+import arviz as az
+import os
+import numpy as np
+import plotnine as gg
+import pandas as pd
+import matplotlib.pyplot as plt
+from cmdstanpy import CmdStanModel, cmdstan_path, set_cmdstan_path
+
+RANDOM_SEED = 123
+rng = np.random.default_rng(RANDOM_SEED)
+az.style.use("arviz-darkgrid")
+
+c_light = "#DCBCBC"
+c_dark = "#8F2727"
+
+current_working_directory = 'C:\\Users\\issam_biodcm6\\Documents\\New folder\\scripts'
+p_dir = os.path.dirname(current_working_directory)
+
+```
+
+
+```{python}
+def simulate_ar(intercept, coef1, coef2, noise=0.3, *, warmup=10, steps=200):
+    # We sample some extra warmup steps, to let the AR process stabilize
+    draws = np.zeros(warmup + steps)
+    # Initialize first draws at intercept
+    draws[:2] = intercept
+    for step in range(2, warmup + steps):
+        draws[step] = (
+            intercept
+            + coef1 * draws[step - 1]
+            + coef2 * draws[step - 2]
+            + np.random.normal(0, noise)
+        )
+    # Discard the warmup draws
+    return draws[warmup:]
+
+
+# True parameters of the AR process
+ar1_data = simulate_ar(10, -0.9, 0)
+
+fig, ax = plt.subplots(figsize=(10, 3))
+ax.set_title("Generated Autoregressive Timeseries", fontsize=15)
+ax.plot(ar1_data, color=c_dark)
+
+```
+
+
+```{python}
+stan_data = {
+    'T': len(ar1_data),
+}
+```
+
+# Prior Predictive Check
+```{python}
+current_directory = os.getcwd()
+model_path = os.path.join(p_dir, 'models', 'ar1.stan')
+stan_model = CmdStanModel(stan_file=model_path)
+
+fit = stan_model.sample(data=stan_data_1, seed=RANDOM_SEED, chains=4, iter_sampling=2000, iter_warmup=1000, show_console=True)
+
+print(fit.diagnose())
+print(fit.summary())
+
+```
+
+```{python}
+idata_ar = az.from_cmdstanpy(posterior=fit,
+                            constant_data={'T': stan_data_1['T']},
+                            )
+
+idata_ar
+```
+
+
+# Posterior Predictive Check
+```{python}
+stan_data_1 = {
+    'T': len(ar1_data),
+    'y': ar1_data,
+}
+
+
+```
+
+
+```{python}
+# Model
+current_directory = os.getcwd()
+model_path_1 = os.path.join(p_dir, 'models', 'ar2.stan')
+stan_model_1 = CmdStanModel(stan_file=model_path_1)
+```
+
+```{python}
+# Fit model
+fit_1 = stan_model_1.sample(data=stan_data_1, seed=RANDOM_SEED, chains=4, iter_sampling=2000, iter_warmup=1000, show_console=True)
+
+print(fit_1.diagnose())
+print(fit_1.summary())
+```
+
+```{python}
+idata_ar_posterior = az.from_cmdstanpy(posterior=fit_1, 
+                            observed_data={'y': stan_data_1['y']},
+                            constant_data={'y': stan_data_1['y'],
+                                            'T': stan_data_1['T']}
+                            )
+az.plot_trace(idata_ar_posterior, figsize=(10, 6), kind="rank_vlines")
+
+```
+
+```{python}
+# Perfect recovery of parameters
+az.summary(idata_ar_posterior)
+```
+
+# Graph Our Posterior Predictions With Our Real Data 
+
+```{python}
+# Plotting our model's output with our data
+fig, ax = plt.subplots(figsize=(10, 4))
+idata_ar_posterior.posterior.y_rep.mean(["chain", "draw"]).plot(ax=ax, label="Posterior Mean AR level", color=c_light)
+ax.plot(ar1_data, "o", color=c_dark, markersize=2, label="Observed Data")
+ax.legend()
+ax.set_title("Fitted AR process\nand observed data")
+
+```
+
+# Predict The Outcome For The Future 50 Time Steps 
+
+```{python}
+# Predict future values by conditionaing on passt data 
+stan_data_2 = {
+    'T': len(ar1_data),
+    'T_pred': 50,
+    'y': ar1_data,
+
+}
+
+# Model path
+model_path_2 = os.path.join(p_dir, 'models', 'ar3.stan')
+stan_model_2 = CmdStanModel(stan_file=model_path_2)
+
+# Fit model
+fit_2 = stan_model_2.sample(data=stan_data_2, seed=RANDOM_SEED, chains=4, iter_sampling=2000, iter_warmup=1000, show_console=True)
+print(fit_2.diagnose())
+print(fit_2.summary())
+
+```
+
+```{python}
+idata_preds = az.from_cmdstanpy(
+    posterior=fit_2,
+    posterior_predictive="y_rep",
+    predictions='y_pred',
+    observed_data={'y': stan_data_2['y']},
+    constant_data={'y': stan_data_2['y'],
+                    'T': stan_data_2['T'],
+                    'T_pred': stan_data_2['T_pred']},
+)
+# Plot the trace and posterior distributions
+az.plot_trace(idata_preds, figsize=(10, 6), kind="rank_vlines")
+idata_preds
+
+```
+
+# Plot The Prior Predictive Fit, The Posterior Distribution, And The Posterior Predictions
+
+```{python}
+
+def plot_fits(idata_ar, idata_preds):
+    palette = "plasma"
+    cmap = plt.get_cmap(palette)
+    percs = np.linspace(51, 99, 100)
+    colors = (percs - np.min(percs)) / (np.max(percs) - np.min(percs))
+    mosaic = """AABB
+                CCCC"""
+
+    fig, axs = plt.subplot_mosaic(mosaic, sharex=False, figsize=(20, 10))
+
+    axs = [axs[k] for k in axs.keys()]
+
+    for i, p in enumerate(percs[::-1]):
+        upper = np.percentile(
+            az.extract(idata_ar, group="posterior", num_samples=1000)["y_sim"],
+            p,
+            axis=1,
+        )
+        lower = np.percentile(
+            az.extract(idata_ar, group="posterior", num_samples=1000)["y_sim"],
+            100 - p,
+            axis=1,
+        )
+        color_val = colors[i]
+        axs[0].fill_between(
+            x=np.arange(idata_ar["constant_data"]["T"]),
+            y1=upper.flatten(),
+            y2=lower.flatten(),
+            color=cmap(color_val),
+            alpha=0.1,
+        )
+
+    axs[0].plot(
+        az.extract(idata_ar, group="posterior", num_samples=1000)["y_sim"].mean(
+            axis=1
+        ),
+        color="cyan",
+        label="Prior Predicted Mean Realisation",
+    )
+
+    axs[0].scatter(
+        x=np.arange(idata_ar["constant_data"]["T"]),
+        y=idata_preds["constant_data"]["y"],
+        color="k",
+        label="Observed Data points",
+    )
+    axs[0].set_title("Prior Predictive Fit", fontsize=20)
+    axs[0].legend()
+
+    for i, p in enumerate(percs[::-1]):
+        upper = np.percentile(
+            az.extract(idata_preds, group="posterior_predictive", num_samples=1000)["y_rep"],
+            p,
+            axis=1,
+        )
+        lower = np.percentile(
+            az.extract(idata_preds, group="posterior_predictive", num_samples=1000)["y_rep"],
+            100 - p,
+            axis=1,
+        )
+        color_val = colors[i]
+        axs[2].fill_between(
+            x=np.arange(idata_preds["constant_data"]["T"]),
+            y1=upper.flatten(),
+            y2=lower.flatten(),
+            color=cmap(color_val),
+            alpha=0.1,
+        )
+
+        upper = np.percentile(
+            az.extract(idata_preds, group="predictions", num_samples=1000)["y_pred"],
+            p,
+            axis=1,
+        )
+        lower = np.percentile(
+            az.extract(idata_preds, group="predictions", num_samples=1000)["y_pred"],
+            100 - p,
+            axis=1,
+        )
+        color_val = colors[i]
+        axs[2].fill_between(
+            x=np.arange(idata_preds["constant_data"]['T'] + idata_preds['constant_data']['T_pred']),
+            y1=upper.flatten(),
+            y2=lower.flatten(),
+            color=cmap(color_val),
+            alpha=0.1,
+        )
+
+    axs[2].plot(
+        az.extract(idata_preds, group="posterior_predictive", num_samples=1000)["y_rep"].mean(
+            axis=1
+        ),
+        color="cyan",
+    )
+    idata_preds.predictions.y_pred.mean(["chain", "draw"]).plot(
+        ax=axs[2], color="cyan", label="Predicted Mean Realisation"
+    )
+    axs[2].scatter(
+        x=np.arange(idata_ar["constant_data"]["T"]),
+        y=idata_preds["constant_data"]["y"],
+        color="k",
+        label="Observed Data",
+    )
+    axs[2].set_title("Posterior Predictions Plotted", fontsize=20)
+    axs[2].axvline(np.max(idata_ar["constant_data"]["T"]), color="black")
+    axs[2].legend()
+    axs[2].set_xlabel("Time in Days")
+    axs[0].set_xlabel("Time in Days")
+    az.plot_ppc(idata_preds, data_pairs={"y":"y_rep"}, ax=axs[1])
+
+
+plot_fits(idata_ar, idata_preds)
+
+
+```
+
+# Now Consider The AR Process With A Trend Component
+
+```{python}
+y_t = -0.3 + np.arange(200) * -0.2 + np.random.normal(0, 10, 200)
+y_t = y_t + ar1_data
+
+fig, ax = plt.subplots(figsize=(10, 4))
+ax.plot(y_t, color=c_dark)
+ax.set_title("AR Process + Trend data");
+```
+
+```{python}
+# Specify a new model that has as inputs the parameters for the various distributions for alpha, beta, etc.
+
+
+```
