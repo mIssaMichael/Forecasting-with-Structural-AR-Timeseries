@@ -18,7 +18,7 @@ az.style.use("arviz-darkgrid")
 c_light = "#DCBCBC"
 c_dark = "#8F2727"
 
-current_working_directory = 'C:\\Users\\issam_biodcm6\\Documents\\New folder\\scripts'
+current_working_directory = 'C:\\Users\\issam_biodcm6\\Documents\\Forecasting with Structural AR Timeseries\\'
 p_dir = os.path.dirname(current_working_directory)
 
 ```
@@ -59,11 +59,10 @@ stan_data = {
 
 # Prior Predictive Check
 ```{python}
-current_directory = os.getcwd()
 model_path = os.path.join(p_dir, 'models', 'ar1.stan')
 stan_model = CmdStanModel(stan_file=model_path)
 
-fit = stan_model.sample(data=stan_data_1, seed=RANDOM_SEED, chains=4, iter_sampling=2000, iter_warmup=1000, show_console=True)
+fit = stan_model.sample(data=stan_data, seed=RANDOM_SEED, chains=4, iter_sampling=2000, iter_warmup=1000, show_console=True)
 
 print(fit.diagnose())
 print(fit.summary())
@@ -72,7 +71,7 @@ print(fit.summary())
 
 ```{python}
 idata_ar = az.from_cmdstanpy(posterior=fit,
-                            constant_data={'T': stan_data_1['T']},
+                            constant_data={'T': stan_data['T']},
                             )
 
 idata_ar
