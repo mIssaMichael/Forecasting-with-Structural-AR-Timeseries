@@ -302,6 +302,210 @@ ax.set_title("AR Process + Trend data");
 
 ```{python}
 # Specify a new model that has as inputs the parameters for the various distributions for alpha, beta, etc.
+stan_data_3_prior_0 = {
+    'T': len(y_t),
+
+    'alpha_mu': -4,
+    'alpha_sigma': 0.1,
+
+    'beta_mu': 0.2,
+    'beta_sigma': 0.1,
+
+    'init_mu': 9,
+    'init_sigma': 0.1,
+
+    'error_sigma': 8,
+}
+stan_data_3_prior_1 = {
+    'T': len(y_t),
+
+    'alpha_mu': -2,
+    'alpha_sigma': 0.1,
+
+    'beta_mu': 0.2,
+    'beta_sigma': 0.1,
+
+    'init_mu': 8,
+    'init_sigma': 0.1,
+
+    'error_sigma': 12,
+}
+
+stan_data_3_prior_2 = {
+    'T': len(y_t),
+
+    'alpha_mu': 0,
+    'alpha_sigma': 0.1,
+
+    'beta_mu': 0.2,
+    'beta_sigma': 0.1,
+
+    'init_mu': 8,
+    'init_sigma': 0.1,
+
+    'error_sigma': 15,
+}
+
+# Model path
+model_path_3 = os.path.join(p_dir, 'models', 'ar4.stan')
+stan_model_3 = CmdStanModel(stan_file=model_path_3)
+
+models = {}
+for i, p in enumerate([stan_data_3_prior_0, stan_data_3_prior_1, stan_data_3_prior_2]):
+    models[i] = {}
+    fit_i = stan_model_3.sample(data=p, seed=RANDOM_SEED, chains=4, iter_sampling=2000, iter_warmup=1000, show_console=True)
+
+    idata = az.from_cmdstanpy(posterior=fit_i,
+                            constant_data={'T': p['T']},
+                            )
+    models[i]["idata"] = idata
+```
+
+```{python}
+fig, axs = plt.subplots(1, 3, figsize=(10, 4), sharey=True)
+axs = axs.flatten()
+for i, p in zip(range(3), [stan_data_3_prior_0, stan_data_3_prior_1, stan_data_3_prior_2]):
+    axs[i].plot(
+        az.extract(models[i]["idata"], group="posterior", num_samples=100)[
+            "y_sim"
+        ],
+        color=c_dark,
+        alpha=0.1,
+    )
+    axs[i].plot(y_t, "o", color='black', markersize=2)
+    axs[i].set_title(
+        f"$y_{{t+1}}$ = N({p['alpha_mu']} + {p['beta_mu']}y_t, {p['error_sigma']})"
+    )
+
+plt.suptitle("Prior Predictive Specifications", fontsize=20);
+```
+
+```{python}
+stan_data_4_prior_0 = {
+    'T': len(y_t),
+    'T_pred': 50,
+    'y': y_t,
+
+    'alpha_mu': -4,
+    'alpha_sigma': 0.1,
+
+    'beta_mu': 0.2,
+    'beta_sigma': 0.1,
+
+    'init_mu': 9,
+    'init_sigma': 0.1,
+
+    'error_sigma': 8,
+}
+
+model_path_4 = os.path.join(p_dir, 'models', 'ar5.stan')
+stan_model_4 = CmdStanModel(stan_file=model_path_4)
+
+fit_4 = stan_model_4.sample(data=stan_data_4_prior_0, seed=RANDOM_SEED, chains=4, iter_sampling=2000, iter_warmup=1000, show_console=True)
+```
+
+```{python}
+idata_preds = az.from_cmdstanpy(
+    posterior=fit_4,
+    posterior_predictive="y_rep",
+    predictions='y_pred',
+    observed_data={'y': stan_data_4_prior_0['y']},
+
+    constant_data={'y': stan_data_4_prior_0['y'],
+                    'T': stan_data_4_prior_0['T'],
+                    'T_pred': stan_data_4_prior_0['T_pred']},
+)
+idata_preds
+```
+
+```{python}
+# Model isn't capable of forecasting without a trend component
+plot_fits(models[0]['idata'], idata_preds)
+```
+
+
+# Fit Trend Model
+
+```{python}
+# Prior predictive
+stan_data_5 = {
+    'T': len(y_t),
+
+    'alpha_mu': 0.2,
+    'alpha_sigma': 0.5,
+
+    'beta_mu': 0.2,
+    'beta_sigma': 0.03,
+
+    'init_mu': -4,
+    'init_sigma': 0.1,
+
+    'error_sigma': 8,
+
+    'trend_alpha_mu': -4,
+    'trend_alpha_sigma': 0.1,
+
+    'trend_beta_mu': -0.1,
+    'trend_beta_sigma': 0.2,
+}
+
+model_path_5 = os.path.join(p_dir, 'models', 'ar7.stan')
+stan_model_5 = CmdStanModel(stan_file=model_path_5)
+
+fit_5 = stan_model_5.sample(data=stan_data_5, seed=RANDOM_SEED, chains=4, iter_sampling=2000, iter_warmup=1000, show_console=True)
+
+idata_ar_trend = az.from_cmdstanpy(posterior = fit_5,
+                                    constant_data={'T': stan_data_5['T']},
+)
+```
+
+```{python}
+# Prior Predictive and Forecast
+stan_data_6 = {
+    'T': len(y_t),
+    'T_pred': 50,
+    'y': y_t,
+
+    'alpha_mu': 0.2,
+    'alpha_sigma': 0.5,
+
+    'beta_mu': 0.2,
+    'beta_sigma': 0.03,
+
+    'init_mu': -4,
+    'init_sigma': 0.1,
+
+    'error_sigma': 8,
+
+    'trend_alpha_mu': -4,
+    'trend_alpha_sigma': 0.1,
+
+    'trend_beta_mu': -0.1,
+    'trend_beta_sigma': 0.2,
+}
+
+model_path_6 = os.path.join(p_dir, 'models', 'ar6.stan')
+stan_model_6 = CmdStanModel(stan_file=model_path_6)
+
+fit_6 = stan_model_6.sample(data=stan_data_6, seed=RANDOM_SEED, chains=4, iter_sampling=2000, iter_warmup=1000, show_console=True)
+
+idata_preds_trend = az.from_cmdstanpy(
+    posterior=fit_6,
+    posterior_predictive="y_rep",
+    predictions='y_pred',
+    observed_data={'y': stan_data_6['y']},
+
+    constant_data={'y': stan_data_6['y'],
+                    'T': stan_data_6['T'],
+                    'T_pred': stan_data_6['T_pred']},
+)
+
+idata_preds_trend
+```
+
+
+```{python}
+plot_fits(idata_ar_trend, idata_preds_trend)
 
 
 ```
