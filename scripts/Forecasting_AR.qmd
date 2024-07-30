@@ -509,3 +509,139 @@ plot_fits(idata_ar_trend, idata_preds_trend)
 
 
 ```
+
+# Now Lets Add Seasonality
+```{python}
+t_data = list(range(200))
+n_order = 10
+periods = np.array(t_data) / 7
+
+fourier_features = pd.DataFrame(
+    {
+        f"{func}_order_{order}": getattr(np, func)(2 * np.pi * periods * order)
+        for order in range(1, n_order + 1)
+        for func in ("sin", "cos")
+    }
+)
+
+y_t_s = y_t + 20 * fourier_features["sin_order_1"]
+
+fig, ax = plt.subplots(figsize=(10, 4))
+ax.plot(y_t_s, color=c_dark)
+ax.set_title("AR + Trend + Seasonality")
+```
+
+```{python}
+# Prior Predictive with seasonality and trend
+stan_data_7 = {
+    'T': len(y_t_s),
+    'F': fourier_features.shape[1],
+
+    'alpha_mu': 0.2,
+    'alpha_sigma': 0.5,
+
+    'beta_mu': 0.2,
+    'beta_sigma': 0.03,
+
+    'init_mu': -4,
+    'init_sigma': 0.1,
+
+    'error_sigma': 8,
+
+    'trend_alpha_mu': -4,
+    'trend_alpha_sigma': 0.1,
+
+    'trend_beta_mu': -0.1,
+    'trend_beta_sigma': 0.2,
+
+    'beta_fourier_mu': 0,
+    'beta_fourier_sigma': 2, 
+
+    'fourier_features': fourier_features,
+}
+
+model_path_7 = os.path.join(p_dir, 'models', 'ar8.stan')
+stan_model_7 = CmdStanModel(stan_file=model_path_7)
+
+fit_7 = stan_model_7.sample(data=stan_data_7, seed=RANDOM_SEED, chains=4, iter_sampling=2000, iter_warmup=1000, show_console=True)
+
+idata_ar_seasonality = az.from_cmdstanpy(posterior = fit_7,
+                                    constant_data={'T': stan_data_5['T']},
+)
+
+```
+
+
+```{python}
+n = 50
+n_order = 10
+periods = (y_t_s.shape[0] + np.arange(n)) / 7
+
+fourier_features_new = pd.DataFrame(
+    {
+        f"{func}_order_{order}": getattr(np, func)(2 * np.pi * periods * order)
+        for order in range(1, n_order + 1)
+        for func in ("sin", "cos")
+    }
+)
+
+fourier_features_new = pd.concat([fourier_features, fourier_features_new], axis=0)
+
+# Posterior Predictive and Forecast
+stan_data_8 = {
+    'T': len(y_t_s),
+    'T_pred': 50,
+    'F': fourier_features_new.shape[1],
+    'y': y_t_s,
+
+    'alpha_mu': 0.2,
+    'alpha_sigma': 0.5,
+
+    'beta_mu': 0.2,
+    'beta_sigma': 0.03,
+
+    'init_mu': -4,
+    'init_sigma': 0.1,
+
+    'error_sigma': 8,
+
+    'trend_alpha_mu': -4,
+    'trend_alpha_sigma': 0.1,
+
+    'trend_beta_mu': -0.1,
+    'trend_beta_sigma': 0.2,
+    
+    'beta_fourier_mu': 0,
+    'beta_fourier_sigma': 2, 
+
+    'fourier_features': fourier_features_new,
+}
+
+
+
+model_path_8 = os.path.join(p_dir, 'models', 'ar9.stan')
+stan_model_8 = CmdStanModel(stan_file=model_path_8)
+
+fit_8 = stan_model_8.sample(data=stan_data_8, seed=RANDOM_SEED, chains=4, iter_sampling=2000, iter_warmup=1000, show_console=True)
+
+idata_preds_seasonality = az.from_cmdstanpy(
+    posterior=fit_8,
+    posterior_predictive="y_rep",
+    predictions='y_pred',
+    observed_data={'y': stan_data_8['y']},
+
+    constant_data={'y': stan_data_8['y'],
+                    'T': stan_data_8['T'],
+                    'T_pred': stan_data_8['T_pred']},
+)
+
+
+
+```
+
+
+```{python}
+
+plot_fits(idata_ar_seasonality, idata_preds_seasonality)
+
+```
